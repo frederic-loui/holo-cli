@@ -37,8 +37,14 @@ struct YangTableColumn {
 }
 
 enum YangTableValue {
-    Leaf(&'static str),
+    Leaf(&'static str, YangValueDisplayFormat),
     Fn(Box<dyn Fn(&DataNodeRef<'_, '_>) -> String>),
+}
+
+enum YangValueDisplayFormat {
+    Raw,
+    Hex16,
+    Hex32,
 }
 
 // ===== impl YangTableBuilder =====
@@ -81,7 +87,49 @@ impl<'a> YangTableBuilder<'a> {
         if let Some((_, columns)) = self.paths.last_mut() {
             columns.push(YangTableColumn {
                 title,
-                value: YangTableValue::Leaf(name),
+                value: YangTableValue::Leaf(name, YangValueDisplayFormat::Raw),
+            });
+        }
+        self
+    }
+
+    // Adds a column to the last added XPath in the builder.
+    //
+    // The column value is shown in hexadecimal, padded to a width of four
+    // digits.
+    pub fn column_leaf_hex16(
+        mut self,
+        title: &'static str,
+        name: &'static str,
+    ) -> Self {
+        if let Some((_, columns)) = self.paths.last_mut() {
+            columns.push(YangTableColumn {
+                title,
+                value: YangTableValue::Leaf(
+                    name,
+                    YangValueDisplayFormat::Hex16,
+                ),
+            });
+        }
+        self
+    }
+
+    // Adds a column to the last added XPath in the builder.
+    //
+    // The column value is shown in hexadecimal, padded to a width of eight
+    // digits.
+    pub fn column_leaf_hex32(
+        mut self,
+        title: &'static str,
+        name: &'static str,
+    ) -> Self {
+        if let Some((_, columns)) = self.paths.last_mut() {
+            columns.push(YangTableColumn {
+                title,
+                value: YangTableValue::Leaf(
+                    name,
+                    YangValueDisplayFormat::Hex32,
+                ),
             });
         }
         self
@@ -117,7 +165,20 @@ impl<'a> YangTableBuilder<'a> {
             let mut values = values.clone();
             for column in columns {
                 let value = match &column.value {
-                    YangTableValue::Leaf(name) => dnode.child_value(name),
+                    YangTableValue::Leaf(name, format) => {
+                        let value = dnode.child_value(name);
+                        match format {
+                            YangValueDisplayFormat::Raw => value,
+                            YangValueDisplayFormat::Hex16 => {
+                                let value = value.parse::<u32>().unwrap();
+                                format!("{:#06x}", value)
+                            }
+                            YangValueDisplayFormat::Hex32 => {
+                                let value = value.parse::<u32>().unwrap();
+                                format!("{:#010x}", value)
+                            }
+                        }
+                    }
                     YangTableValue::Fn(cb) => (*cb)(&dnode),
                 };
                 values.push(value)
@@ -269,7 +330,7 @@ pub trait DataNodeRefExt {
     fn relative_opt_value(&self, xpath: &str) -> Option<String>;
 }
 
-impl<'a, 'b> DataNodeRefExt for DataNodeRef<'a, 'b> {
+impl DataNodeRefExt for DataNodeRef<'_, '_> {
     fn child_value(&self, name: &str) -> String {
         self.child_opt_value(name).unwrap_or("-".to_owned())
     }
@@ -684,6 +745,7 @@ pub(crate) fn cmd_show_isis_interface(
         .xpath(XPATH_ISIS_INTERFACE)
         .filter_list_key("name", get_opt_arg(&mut args, "name"))
         .column_leaf("Name", "name")
+        .column_leaf("Type", "interface-type")
         .column_leaf("Circuit ID", "circuit-id")
         .column_leaf("State", "state")
         .show()?;
@@ -727,8 +789,8 @@ pub(crate) fn cmd_show_isis_database(
         .column_leaf("Level", "level")
         .xpath(XPATH_ISIS_LSP)
         .column_leaf("LSP ID", "lsp-id")
-        .column_leaf("Sequence", "sequence")
-        .column_leaf("Checksum", "checksum")
+        .column_leaf_hex32("Sequence", "sequence")
+        .column_leaf_hex16("Checksum", "checksum")
         .column_leaf("Lifetime", "remaining-lifetime")
         .show()?;
 
